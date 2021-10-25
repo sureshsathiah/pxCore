@@ -244,7 +244,7 @@ public:
     void downloadFileAsByteRange(rtFileDownloadRequest* downloadRequest);
     void setDefaultCallbackFunction(void (*callbackFunction)(rtFileDownloadRequest*));
     bool downloadFromNetwork(rtFileDownloadRequest* downloadRequest);
-    bool downloadByteRangeFromNetwork(rtFileDownloadRequest* downloadRequest, bool *bRedirect);
+    bool downloadByteRangeFromNetwork(rtFileDownloadRequest* downloadRequest, int *redirectCount);
     void checkForExpiredHandles();
 
 private:

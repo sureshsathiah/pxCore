@@ -934,12 +934,11 @@ void rtFileDownloader::downloadFileAsByteRange(rtFileDownloadRequest* downloadRe
 #endif
     {
       const rtString actualUrl = downloadRequest->fileUrl();
-      bool reDirect = false;
-      nwDownloadSuccess = downloadByteRangeFromNetwork(downloadRequest, &reDirect);
-      if(reDirect == true)
+      int reDirectCount = 0;
+      nwDownloadSuccess = downloadByteRangeFromNetwork(downloadRequest, &reDirectCount);
+      if(reDirectCount == 1)
       {
-         reDirect = false;
-         nwDownloadSuccess = downloadByteRangeFromNetwork(downloadRequest, &reDirect);
+         nwDownloadSuccess = downloadByteRangeFromNetwork(downloadRequest, &reDirectCount);
          downloadRequest->setFileUrl(actualUrl.cString());
       }
     }
@@ -1009,7 +1008,7 @@ void rtFileDownloader::downloadFileAsByteRange(rtFileDownloadRequest* downloadRe
     clearFileDownloadRequest(downloadRequest);
 }
 
-bool rtFileDownloader::downloadByteRangeFromNetwork(rtFileDownloadRequest* downloadRequest, bool *bRedirect)
+bool rtFileDownloader::downloadByteRangeFromNetwork(rtFileDownloadRequest* downloadRequest, int *redirectCount)
 {
    CURL *curl_handle = NULL;
    CURLcode res = CURLE_OK;
@@ -1224,21 +1223,18 @@ bool rtFileDownloader::downloadByteRangeFromNetwork(rtFileDownloadRequest* downl
          curl_easy_setopt(curl_handle, CURLOPT_HEADERFUNCTION, NULL);
          curl_easy_setopt(curl_handle, CURLOPT_HEADERDATA, NULL);
 
-         rtString httpHeaderStr(reinterpret_cast< char const* >((unsigned char *)chunk.headerBuffer));
+         size_t responseCode = 0;
+         curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &responseCode );
+         rtLogInfo("Suresh responseCode %d\n", responseCode);
+         if(responseCode == 302)
+		 {
+            char *reDirUrl = NULL;
+            curl_easy_getinfo(curl_handle, CURLINFO_REDIRECT_URL, &reDirUrl );
 
-         // Parsing redirected Url if 302 found.
-         size_t find302Status = httpHeaderStr.find(0, "302 Found");
-         if(find302Status != -1)
-         {
-            rtString str302Found = httpHeaderStr.substring(find302Status);
-            size_t findReDirLoc = str302Found.find(0, "Location:");
-
-            if(findReDirLoc != -1)
+            if(reDirUrl)
             {
-               strLocation = str302Found.substring(findReDirLoc+strlen("Location:"));
-               strLocation = strLocation.substring(0, strLocation.find(0, "\n")-1);
-               curlUrl = strLocation.trim();
-               rtLogInfo("302 Found. Redirected curl URL (%s)", curlUrl.cString());
+               curlUrl = rtString(reDirUrl);
+               rtLogInfo("302. Redirected curl URL (%s)", curlUrl.cString());
 
                //clean up contents on error
                if (chunk.contentsBuffer != NULL)
@@ -1258,11 +1254,20 @@ bool rtFileDownloader::downloadByteRangeFromNetwork(rtFileDownloadRequest* downl
                downloadRequest->setHeaderData(NULL, 0);
 
                downloadRequest->setFileUrl(curlUrl.cString());
-               rtLogInfo("downloadRequest->fileUrl().cString() URL (%s)", downloadRequest->fileUrl().cString());
-               *bRedirect = true;
+               (*redirectCount)++;
+
+               rtLogInfo("downloadRequest->fileUrl().cString() URL (%s) redirectCount %d", downloadRequest->fileUrl().cString(), *redirectCount);
+               if(*redirectCount == 2)
+               {
+                  res = CURLE_TOO_MANY_REDIRECTS;
+                  strcpy(errorBuffer, "CURLE_TOO_MANY_REDIRECTS");
+                  rtLogError("More than one redirect, so forcing not to proceed and report with the CURLE_TOO_MANY_REDIRECTS");
+               }
                break;
             }
          }
+
+         rtString httpHeaderStr(reinterpret_cast< char const* >((unsigned char *)chunk.headerBuffer));
 
          // Parsing total filesize from Content-Range.
          int32_t findContentRange = httpHeaderStr.find(0, "Content-Range: bytes");
@@ -1284,6 +1289,14 @@ bool rtFileDownloader::downloadByteRangeFromNetwork(rtFileDownloadRequest* downl
          }
          else
             rtLogError("Http header doesn't have Content-Range. Url(%s)\n", downloadRequest->fileUrl().cString());
+
+         if(downloadRequest->actualFileSize() == 0)
+         {
+            res = CURLE_RANGE_ERROR;
+            strcpy(errorBuffer, "CURLE_RANGE_ERROR");
+            rtLogError("Failed to obtain fileSize from http response header. report CURLE_RANGE_ERROR");
+            break;
+         }
 
          multipleIntervals = (downloadRequest->actualFileSize() >= downloadRequest->byteRangeIntervals()) ? (downloadRequest->actualFileSize() / downloadRequest->byteRangeIntervals()) : 0;
          multipleIntervals++; // Increment one more because already one iteration made before determinding multipleIntervals.
