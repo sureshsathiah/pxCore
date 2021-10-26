@@ -1225,7 +1225,7 @@ bool rtFileDownloader::downloadByteRangeFromNetwork(rtFileDownloadRequest* downl
 
          size_t responseCode = 0;
          curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &responseCode );
-         rtLogInfo("Suresh responseCode %d\n", responseCode);
+         rtLogInfo("responseCode %d\n", responseCode);
          if(responseCode == 302)
 		 {
             char *reDirUrl = NULL;
